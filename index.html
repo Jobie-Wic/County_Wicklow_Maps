@@ -26,8 +26,20 @@
     header{background:#2c3e50;color:#fff;padding:2rem;text-align:center}
     section{padding:2rem;max-width:1200px;margin:auto}
     #map,#wicklowMap,#heatmap{height:600px;width:100%;margin-top:1rem;border:2px solid #ccc;background:#fff;position:relative}
-    .info.legend{background:#fff;padding:10px;border:1px solid #ccc;font-size:.9em;line-height:1.2em}
-    .info.legend i{width:12px;height:12px;display:inline-block;margin-right:6px;opacity:.85}
+
+    /* Legend styling */
+    .info.legend{background:#fff;padding:10px;border:1px solid #ccc;font-size:.9em;line-height:1.2em;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+    .info.legend .title{font-weight:600;margin-bottom:6px}
+    .info.legend .row{display:flex;align-items:center;margin:4px 0}
+    .info.legend .swatch{width:12px;height:12px;margin-right:8px;border-radius:2px;border:1px solid #0002}
+    .info.legend .ramp{width:160px;height:12px;border:1px solid #0002;margin:6px 0}
+    .info.legend .note{font-size:11px;color:#444;margin-top:6px}
+    .leaflet-control-layers .legend-section{
+      border-top:1px solid #ddd;
+      margin-top:8px;
+      padding-top:8px;
+    }
+
     #geocoder-control{position:absolute;top:10px;left:10px;width:320px;z-index:1000;background:#fff;border-radius:6px;
       box-shadow:0 2px 6px rgba(0,0,0,.3);padding:5px}
   </style>
@@ -70,8 +82,62 @@ document.addEventListener('DOMContentLoaded', async () => {
     return '#FFD700';
   }
 
-  /* Main map — start zoomed in */
-  const map = L.map('map', { zoomControl:true }).setView([53.0, -6.35], 10);
+  /* Legend helpers */
+  const STATUS_COLORS = {
+    "Finalised": "#8E24AA",
+    "Appealed Financial": "#E53935",
+    "Appealed": "#FF9800",
+    "New Application": "#2196F3",
+    "Decision Made": "#4CAF50",
+    "Other / Unknown": "#FFD700"
+  };
+
+  function addStatusLegend(targetMap, title = 'Legend — Application Status') {
+    const ctrl = L.control({ position: 'bottomright' });
+    ctrl.onAdd = () => {
+      const div = L.DomUtil.create('div', 'info legend');
+      div.innerHTML = `<div class="title">${title}</div>`;
+      for (const [label, color] of Object.entries(STATUS_COLORS)) {
+        div.innerHTML += `<div class="row"><span class="swatch" style="background:${color}"></span>${label}</div>`;
+      }
+      return div;
+    };
+    ctrl.addTo(targetMap);
+    return ctrl;
+  }
+
+  function addSimplePointLegend(targetMap, title='Legend', label='Planning applications (points)', color='#FFD700') {
+    const ctrl = L.control({ position: 'bottomright' });
+    ctrl.onAdd = () => {
+      const div = L.DomUtil.create('div', 'info legend');
+      div.innerHTML = `<div class="title">${title}</div>
+        <div class="row"><span class="swatch" style="background:${color};border:1px solid #0002;border-radius:50%"></span>${label}</div>`;
+      return div;
+    };
+    ctrl.addTo(targetMap);
+    return ctrl;
+  }
+
+  function addHeatLegendIntoLayers(layerControl) {
+    const box = layerControl.getContainer();
+    const sec = document.createElement('div');
+    sec.className = 'legend-section info legend';
+    sec.innerHTML = `
+      <div class="title">Legend</div>
+      <div>Planning applications (heat)</div>
+      <div class="ramp" style="background:linear-gradient(to right,#2b83ba,#abdda4,#ffffbf,#fdae61,#d7191c)"></div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:-2px;">
+        <span>Lower</span><span>Higher</span>
+      </div>
+      <div class="row" style="margin-top:6px;">
+        <span class="swatch" style="background:#fff;border:2px solid #000;border-radius:50%"></span> GP locations (points)
+      </div>
+      <div class="note">Tip: use the checkboxes above to toggle layers.</div>`;
+    box.appendChild(sec);
+  }
+
+  /* Main map */
+  const map = L.map('map', { zoomControl:true }).setView([53.0, -6.35], 11);
   const wicklowBounds = L.latLngBounds([52.72, -6.80], [53.35, -5.85]);
   map.setMaxBounds(wicklowBounds.pad(0.25));
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(map);
@@ -81,7 +147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     disableClusteringAtZoom:14, maxClusterRadius:60, chunkedLoading:true
   }).addTo(map);
 
-  /* Focus map — fixed zoom */
+  /* Focus map */
   const focusMap = L.map('wicklowMap').setView([53.14, -6.07], 13);
   L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
     maxZoom:18,
@@ -95,7 +161,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(heatmap);
   let planHeat = null, gpLayer = null;
 
-  /* Load planning applications */
+  /* Load planning apps */
   try {
     const planData = await (await fetch(PLAN_FILE)).json();
 
@@ -104,15 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         radius:5,
         fillColor: statusColor(f.properties?.application_status),
         color:'#000', weight:0.8, opacity:1, fillOpacity:0.95
-      }),
-      onEachFeature: (f, layer) => {
-        const p = f.properties || {};
-        layer.bindPopup(
-          `<strong>${p.development_description || 'No description'}</strong><br>
-           ${p.development_address || 'No address'}<br>
-           <em>${p.application_status || 'Status unknown'}</em>`
-        );
-      }
+      })
     });
     planAppCluster.addLayer(planLayer);
 
@@ -130,24 +188,20 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     ).addTo(focusMap);
 
-  } catch (e) {
-    console.error('Planning applications load error:', e);
-  }
+  } catch (e) { console.error('Planning load error:', e); }
 
-  /* Planning heat */
+  /* Heat layer */
   try {
     const planData = await (await fetch(PLAN_FILE)).json();
     const planPoints = [];
     (planData.features || []).forEach(f => {
       const c = f.geometry && f.geometry.coordinates;
-      if (Array.isArray(c) && !isNaN(c[0]) && !isNaN(c[1])) planPoints.push([c[1], c[0]]);
+      if (Array.isArray(c)) planPoints.push([c[1], c[0]]);
     });
     if (L.heatLayer && planPoints.length) {
       planHeat = L.heatLayer(planPoints, { radius:16, blur:12, maxZoom:16, minOpacity:0.30 }).addTo(heatmap);
     }
-  } catch (e) {
-    console.error('Planning file load error:', e);
-  }
+  } catch (e) { console.error('Heat load error:', e); }
 
   /* GP locations */
   try {
@@ -155,36 +209,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     const gpsPoints = [];
     (gpsData.features || []).forEach(f => {
       const c = f.geometry && f.geometry.coordinates;
-      if (Array.isArray(c) && !isNaN(c[0]) && !isNaN(c[1])) gpsPoints.push([c[1], c[0]]);
+      if (Array.isArray(c)) gpsPoints.push([c[1], c[0]]);
     });
-
     if (gpsPoints.length) {
-      if (!heatmap.getPane('gpPane')) {
-        heatmap.createPane('gpPane');
-        heatmap.getPane('gpPane').style.zIndex = 650;
-      }
       gpLayer = L.layerGroup(
         gpsPoints.map(([lat, lng]) =>
           L.circleMarker([lat, lng], {
-            pane:'gpPane',
-            radius:5,
-            color:'#000000',
-            weight:1.25,
-            fillColor:'#FFFFFF',
-            fillOpacity:0.95
+            radius:5, color:'#000', weight:1.25,
+            fillColor:'#FFF', fillOpacity:0.95
           })
         )
       );
     }
-  } catch (e) {
-    console.error('GPS file load error:', e);
-  }
+  } catch (e) { console.error('GPS load error:', e); }
 
-  /* Layer control */
+  /* Layer control + embed heat legend */
   const overlays = {};
   if (planHeat) overlays['Heat – Planning Applications'] = planHeat;
-  if (gpLayer)  overlays['GP Locations (points)']        = gpLayer;
-  L.control.layers(null, overlays, { collapsed:false }).addTo(heatmap);
+  if (gpLayer) overlays['GP Locations (points)'] = gpLayer;
+  const layerCtrl = L.control.layers(null, overlays, { collapsed:false }).addTo(heatmap);
+  addHeatLegendIntoLayers(layerCtrl);
 
   /* Geocoder */
   mapboxgl.accessToken = 'YOUR_MAPBOX_TOKEN';
@@ -193,47 +237,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const geocoder = new MapboxGeocoder({ accessToken: mapboxgl.accessToken, mapboxgl, marker:false, zoom:13, placeholder:'Search Wicklow locations…' });
   geocoder.addTo('#geocoder-control');
 
-  /* Status legend (main map) */
-  const legend = L.control({ position: 'bottomright' });
-  legend.onAdd = () => {
-    const div = L.DomUtil.create('div', 'info legend');
-    div.innerHTML += '<strong>Legend — Application Status</strong><br>';
-    div.innerHTML += '<i style="background:#8E24AA"></i> Finalised<br>';
-    div.innerHTML += '<i style="background:#E53935"></i> Appealed Financial<br>';
-    div.innerHTML += '<i style="background:#FF9800"></i> Appealed<br>';
-    div.innerHTML += '<i style="background:#2196F3"></i> New Application<br>';
-    div.innerHTML += '<i style="background:#4CAF50"></i> Decision Made<br>';
-    div.innerHTML += '<i style="background:#FFD700"></i> Other / Unknown<br>';
-    return div;
-  };
-  legend.addTo(map);
-
-  /* Legend for focus map */
-  const focusLegend = L.control({ position: 'bottomright' });
-  focusLegend.onAdd = () => {
-    const div = L.DomUtil.create('div', 'info legend');
-    div.innerHTML += '<strong>Legend</strong><br>';
-    div.innerHTML += '<i style="background:yellow; border:1px solid #000"></i> Planning applications (points)<br>';
-    return div;
-  };
-  focusLegend.addTo(focusMap);
-
-  /* Heatmap legend */
-  const heatLegend = L.control({ position: 'bottomleft' });
-  heatLegend.onAdd = () => {
-    const div = L.DomUtil.create('div', 'info legend');
-    div.innerHTML += '<strong>Legend</strong><br>';
-    div.innerHTML += 'Planning applications (heat)<br>';
-    div.innerHTML += '<div style="height:10px;width:80px;background:linear-gradient(to right, blue, lime, yellow, red);margin:4px 0"></div>';
-    div.innerHTML += 'Lower &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Higher<br>';
-    div.innerHTML += '<br><i style="background:#fff; border:1px solid #000; border-radius:50%;width:12px;height:12px;display:inline-block;margin-right:6px;"></i> GP locations (points)<br>';
-    div.innerHTML += '<em>Tip: use the layer box (top-right) to toggle heat vs. GP points.</em>';
-    return div;
-  };
-  heatLegend.addTo(heatmap);
-
+  /* Add legends */
+  addStatusLegend(map);
+  addSimplePointLegend(focusMap);
 });
 </script>
 </body>
 </html>
-
