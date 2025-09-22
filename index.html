@@ -26,8 +26,16 @@
     header{background:#2c3e50;color:#fff;padding:2rem;text-align:center}
     section{padding:2rem;max-width:1200px;margin:auto}
     #map,#wicklowMap,#heatmap{height:600px;width:100%;margin-top:1rem;border:2px solid #ccc;background:#fff;position:relative}
-    .info.legend{background:#fff;padding:10px;border:1px solid #ccc;font-size:.9em;line-height:1.2em}
+    .info.legend{background:#fff;padding:10px;border:1px solid #ccc;font-size:.9em;line-height:1.2em;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.2)}
     .info.legend i{width:12px;height:12px;display:inline-block;margin-right:6px;opacity:.85}
+
+    /* Legend polish */
+    .info.legend .title{font-weight:600;margin-bottom:6px}
+    .info.legend .row{display:flex;align-items:center;margin:4px 0}
+    .info.legend .swatch{width:12px;height:12px;margin-right:8px;border-radius:2px;border:1px solid #0002}
+    .info.legend .ramp{width:160px;height:12px;border:1px solid #0002;margin:6px 0}
+    .info.legend .note{font-size:11px;color:#444;margin-top:6px}
+
     #geocoder-control{position:absolute;top:10px;left:10px;width:320px;z-index:1000;background:#fff;border-radius:6px;
       box-shadow:0 2px 6px rgba(0,0,0,.3);padding:5px}
   </style>
@@ -55,11 +63,10 @@
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
 
-  /* Local files */
-const RAW_BASE = 'https://raw.githubusercontent.com/<Jobie-Wic>/county_wicklow_maps/main/Data/';
-const PLAN_FILE = RAW_BASE + 'plan_app_ww_clean.geojson';
-const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
-
+  /* === Data sources (raw GitHub URLs) === */
+  const RAW_BASE = 'https://raw.githubusercontent.com/Jobie-Wic/county_wicklow_maps/main/Data/';
+  const PLAN_FILE = RAW_BASE + 'plan_app_ww_clean.geojson';
+  const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
 
   /* Status colour helper */
   function statusColor(status) {
@@ -72,6 +79,62 @@ const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
     return '#FFD700';
   }
 
+  /* Legend helpers */
+  const STATUS_COLORS = {
+    "Finalised": "#8E24AA",
+    "Appealed Financial": "#E53935",
+    "Appealed": "#FF9800",
+    "New Application": "#2196F3",
+    "Decision Made": "#4CAF50",
+    "Other / Unknown": "#FFD700"
+  };
+
+  function addStatusLegend(targetMap, title = 'Legend') {
+    const legend = L.control({ position: 'bottomright' });
+    legend.onAdd = () => {
+      const div = L.DomUtil.create('div', 'info legend');
+      div.innerHTML = `<div class="title">${title}</div>`;
+      for (const [label, color] of Object.entries(STATUS_COLORS)) {
+        div.innerHTML += `<div class="row">
+          <span class="swatch" style="background:${color}"></span>${label}
+        </div>`;
+      }
+      return div;
+    };
+    legend.addTo(targetMap);
+    return legend;
+  }
+
+  function addHeatLegend(targetMap) {
+    const legend = L.control({ position: 'bottomleft' });
+    legend.onAdd = () => {
+      const div = L.DomUtil.create('div', 'info legend');
+      div.innerHTML = `<div class="title">Legend</div>`;
+      div.innerHTML += `<div>Planning applications (heat)</div>
+        <div class="ramp" style="
+          background: linear-gradient(to right,
+            #2b83ba, #abdda4, #ffffbf, #fdae61, #d7191c);"></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:-2px;">
+          <span>Lower</span><span>Higher</span>
+        </div>`;
+      div.innerHTML += `<div class="row" style="margin-top:6px;">
+        <span class="swatch" style="background:#fff;border:2px solid #000;border-radius:50%"></span>
+        GP locations (points)
+      </div>`;
+      div.innerHTML += `<div class="note">Tip: use the layer box (top-right) to toggle heat vs. GP points.</div>`;
+      return div;
+    };
+    legend.addTo(targetMap);
+    return legend;
+  }
+
+  /* Optional coordinate helper (toggle if your files are [lat,lon]) */
+  const GEOJSON_IS_LATLON = false;
+  function toLatLng(c) {
+    if (!Array.isArray(c) || isNaN(c[0]) || isNaN(c[1])) return null;
+    return GEOJSON_IS_LATLON ? L.latLng(c[0], c[1]) : L.latLng(c[1], c[0]);
+  }
+
   /* Main map */
   const map = L.map('map', { zoomControl:true });
   const wicklowBounds = L.latLngBounds([52.72, -6.80], [53.35, -5.85]);
@@ -79,7 +142,7 @@ const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
   map.setMaxBounds(wicklowBounds.pad(0.25));
   map.options.minZoom = map.getZoom();
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(map);
-  L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom:18 });
+  L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom:18 }); // available if you want to add it
   const planAppCluster = L.markerClusterGroup({
     showCoverageOnHover:false, spiderfyOnMaxZoom:true,
     disableClusteringAtZoom:14, maxClusterRadius:60, chunkedLoading:true
@@ -102,12 +165,18 @@ const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
   try {
     const planData = await (await fetch(PLAN_FILE)).json();
 
+    // cluster-friendly markers (divIcon to keep your status colors)
     const planLayer = L.geoJSON(planData, {
-      pointToLayer: (f, latlng) => L.circleMarker(latlng, {
-        radius:5,
-        fillColor: statusColor(f.properties?.application_status),
-        color:'#000', weight:0.8, opacity:1, fillOpacity:0.95
-      }),
+      pointToLayer: (f, latlng) => {
+        const color = statusColor(f.properties?.application_status);
+        const icon = L.divIcon({
+          className: 'dot-icon',
+          html: `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+                          border:1px solid #0003;background:${color};"></span>`,
+          iconSize: [10,10]
+        });
+        return L.marker(latlng, { icon });
+      },
       onEachFeature: (f, layer) => {
         const p = f.properties || {};
         layer.bindPopup(
@@ -119,9 +188,10 @@ const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
     });
     planAppCluster.addLayer(planLayer);
 
+    // Focus subset
     const focusFeatures = (planData.features || []).filter(f => {
-      const c = f.geometry && f.geometry.coordinates;
-      return Array.isArray(c) && focusBBox.contains(L.latLng(c[1], c[0]));
+      const ll = toLatLng(f.geometry && f.geometry.coordinates);
+      return ll && focusBBox.contains(ll);
     });
 
     const focusLayer = L.geoJSON(
@@ -136,6 +206,9 @@ const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
     const fb = focusLayer.getBounds();
     if (fb.isValid()) focusMap.fitBounds(fb, { padding:[20,20] });
 
+    // Add status legend to FOCUSED map
+    addStatusLegend(focusMap, 'Legend — Application Status');
+
   } catch (e) {
     console.error('Planning applications load error:', e);
   }
@@ -145,8 +218,8 @@ const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
     const planData = await (await fetch(PLAN_FILE)).json();
     const planPoints = [];
     (planData.features || []).forEach(f => {
-      const c = f.geometry && f.geometry.coordinates;
-      if (Array.isArray(c) && !isNaN(c[0]) && !isNaN(c[1])) planPoints.push([c[1], c[0]]);
+      const ll = toLatLng(f.geometry && f.geometry.coordinates);
+      if (ll) planPoints.push([ll.lat, ll.lng]);
     });
     if (L.heatLayer && planPoints.length) {
       planHeat = L.heatLayer(planPoints, { radius:16, blur:12, maxZoom:16, minOpacity:0.30 }).addTo(heatmap);
@@ -160,8 +233,8 @@ const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
     const gpsData = await (await fetch(GPS_FILE)).json();
     const gpsPoints = [];
     (gpsData.features || []).forEach(f => {
-      const c = f.geometry && f.geometry.coordinates;
-      if (Array.isArray(c) && !isNaN(c[0]) && !isNaN(c[1])) gpsPoints.push([c[1], c[0]]);
+      const ll = toLatLng(f.geometry && f.geometry.coordinates);
+      if (ll) gpsPoints.push([ll.lat, ll.lng]);
     });
 
     if (gpsPoints.length) {
@@ -186,37 +259,22 @@ const GPS_FILE  = RAW_BASE + 'gps_ww_cleaned.geojson';
     console.error('GPS file load error:', e);
   }
 
-  /* Layer control */
+  /* Layer control (heatmap) */
   const overlays = {};
   if (planHeat) overlays['Heat – Planning Applications'] = planHeat;
   if (gpLayer)  overlays['GP Locations (points)']        = gpLayer;
   L.control.layers(null, overlays, { collapsed:false }).addTo(heatmap);
 
-  /* Geocoder */
+  // Add HEATMAP legend with title & hint
+  addHeatLegend(heatmap);
+
+  /* Geocoder on main map */
   mapboxgl.accessToken = 'pk.eyJ1IjoicmVhbHRhNzgiLCJhIjoiY204cWE2MWxsMGhwYjJxc2FteGhhczkzYyJ9.PCnUHvs7IX7wtLx0On63kw';
   const geocoderDiv = document.createElement('div'); geocoderDiv.id = 'geocoder-control'; geocoderDiv.style.margin = '10px';
   document.getElementById('map').appendChild(geocoderDiv);
   const geocoder = new MapboxGeocoder({ accessToken: mapboxgl.accessToken, mapboxgl, marker:false, zoom:13, placeholder:'Search Wicklow locations…' });
   geocoder.addTo('#geocoder-control');
-
-  /* Status legend */
-  const legend = L.control({ position: 'bottomright' });
-  legend.onAdd = () => {
-    const div = L.DomUtil.create('div', 'info legend');
-    div.innerHTML += '<strong>Application Status</strong><br>';
-    div.innerHTML += '<i style="background:#8E24AA"></i> Finalised<br>';
-    div.innerHTML += '<i style="background:#E53935"></i> Appealed Financial<br>';
-    div.innerHTML += '<i style="background:#FF9800"></i> Appealed<br>';
-    div.innerHTML += '<i style="background:#2196F3"></i> New Application<br>';
-    div.innerHTML += '<i style="background:#4CAF50"></i> Decision Made<br>';
-    div.innerHTML += '<i style="background:#FFD700"></i> Other / Unknown<br>';
-    return div;
-  };
-  legend.addTo(map);
 });
 </script>
 </body>
 </html>
-
-
-
