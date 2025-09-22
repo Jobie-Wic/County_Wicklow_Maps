@@ -159,8 +159,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* Main map */
   const map = L.map('map', { zoomControl:true });
+   .setView([53.0, -6.35], 10);
   const wicklowBounds = L.latLngBounds([52.72, -6.80], [53.35, -5.85]);
-  map.fitBounds(wicklowBounds);
   map.setMaxBounds(wicklowBounds.pad(0.25));
   map.options.minZoom = map.getZoom();
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(map);
@@ -171,7 +171,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }).addTo(map);
 
   /* Focus map */
-  const focusMap = L.map('wicklowMap').setView([53.14, -6.07], 14);
+  const focusMap = L.map('wicklowMap').setView([53.14, -6.07], 13);
   L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
     maxZoom:18,
     attribution:'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)'
@@ -224,9 +224,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         })
       }
     ).addTo(focusMap);
-
-    const fb = focusLayer.getBounds();
-    if (fb.isValid()) focusMap.fitBounds(fb, { padding:[20,20] });
 
     // Focus map: simple legend for yellow points
     addSimplePointLegend(focusMap, 'Legend', 'Planning applications (points)', '#FFD700');
@@ -303,3 +300,4 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 </body>
 </html>
+
