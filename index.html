@@ -28,6 +28,9 @@
     #map,#wicklowMap,#heatmap{height:600px;width:100%;margin-top:1rem;border:2px solid #ccc;background:#fff;position:relative}
 
     .info.legend{background:#fff;padding:10px;border:1px solid #ccc;font-size:.9em;line-height:1.2em;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+    .info.legend i{width:12px;height:12px;display:inline-block;margin-right:6px;opacity:.85}
+
+    /* Legend polish */
     .info.legend .title{font-weight:600;margin-bottom:6px}
     .info.legend .row{display:flex;align-items:center;margin:4px 0}
     .info.legend .swatch{width:12px;height:12px;margin-right:8px;border-radius:2px;border:1px solid #0002}
@@ -147,7 +150,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     container.appendChild(sec);
   }
 
-  /* Optional coordinate helper */
+  /* Optional coordinate helper (toggle if your files are [lat,lon]) */
   const GEOJSON_IS_LATLON = false;
   function toLatLng(c) {
     if (!Array.isArray(c) || isNaN(c[0]) || isNaN(c[1])) return null;
@@ -155,27 +158,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /* Main map */
-  const map = L.map('map', { zoomControl:true })
-    .setView([53.0, -6.35], 10); // zoomed in default
-
+  const map = L.map('map', { zoomControl:true });
   const wicklowBounds = L.latLngBounds([52.72, -6.80], [53.35, -5.85]);
+  map.fitBounds(wicklowBounds);
   map.setMaxBounds(wicklowBounds.pad(0.25));
-
+  map.options.minZoom = map.getZoom();
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(map);
+  L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom:18 }); // available as an alt base
   const planAppCluster = L.markerClusterGroup({
     showCoverageOnHover:false, spiderfyOnMaxZoom:true,
     disableClusteringAtZoom:14, maxClusterRadius:60, chunkedLoading:true
   }).addTo(map);
 
   /* Focus map */
-  const focusMap = L.map('wicklowMap')
-    .setView([53.14, -6.07], 13); // zoomed in Greystones/Delgany
-
+  const focusMap = L.map('wicklowMap').setView([53.14, -6.07], 14);
   L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
     maxZoom:18,
     attribution:'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)'
   }).addTo(focusMap);
-
   const focusBBox = L.latLngBounds([53.095, -6.12], [53.190, -6.020]);
 
   /* Heat map */
@@ -187,7 +187,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const planData = await (await fetch(PLAN_FILE)).json();
 
-    // cluster-friendly markers
+    // cluster-friendly markers (divIcon to keep your status colors)
     const planLayer = L.geoJSON(planData, {
       pointToLayer: (f, latlng) => {
         const color = statusColor(f.properties?.application_status);
@@ -216,7 +216,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       return ll && focusBBox.contains(ll);
     });
 
-    L.geoJSON(
+    const focusLayer = L.geoJSON(
       { type:'FeatureCollection', features: focusFeatures },
       { pointToLayer: (f, latlng) => L.circleMarker(latlng, {
           radius:5, fillColor: statusColor(f.properties?.application_status),
@@ -225,7 +225,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     ).addTo(focusMap);
 
-    // Focus map: simple legend
+    const fb = focusLayer.getBounds();
+    if (fb.isValid()) focusMap.fitBounds(fb, { padding:[20,20] });
+
+    // Focus map: simple legend for yellow points
     addSimplePointLegend(focusMap, 'Legend', 'Planning applications (points)', '#FFD700');
 
   } catch (e) {
@@ -284,12 +287,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (gpLayer)  overlays['GP Locations (points)']        = gpLayer;
   const layerCtrl = L.control.layers(null, overlays, { collapsed:false }).addTo(heatmap);
 
+  // Merge the legend into the SAME box:
   addHeatLegendIntoLayers(layerCtrl);
 
-  /* MAIN map — status legend */
+  /* MAIN map — status legend back in bottom right */
   addStatusLegend(map, 'Legend — Application Status');
 
-  /* Geocoder */
+  /* Geocoder on main map */
   mapboxgl.accessToken = 'pk.eyJ1IjoicmVhbHRhNzgiLCJhIjoiY204cWE2MWxsMGhwYjJxc2FteGhhczkzYyJ9.PCnUHvs7IX7wtLx0On63kw';
   const geocoderDiv = document.createElement('div'); geocoderDiv.id = 'geocoder-control'; geocoderDiv.style.margin = '10px';
   document.getElementById('map').appendChild(geocoderDiv);
