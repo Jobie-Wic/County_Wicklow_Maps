@@ -26,6 +26,7 @@
     header{background:#2c3e50;color:#fff;padding:2rem;text-align:center}
     section{padding:2rem;max-width:1200px;margin:auto}
     #map,#wicklowMap,#heatmap{height:600px;width:100%;margin-top:1rem;border:2px solid #ccc;background:#fff;position:relative}
+
     .info.legend{background:#fff;padding:10px;border:1px solid #ccc;font-size:.9em;line-height:1.2em;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.2)}
     .info.legend i{width:12px;height:12px;display:inline-block;margin-right:6px;opacity:.85}
 
@@ -35,6 +36,13 @@
     .info.legend .swatch{width:12px;height:12px;margin-right:8px;border-radius:2px;border:1px solid #0002}
     .info.legend .ramp{width:160px;height:12px;border:1px solid #0002;margin:6px 0}
     .info.legend .note{font-size:11px;color:#444;margin-top:6px}
+
+    /* Legend inserted inside the layer control */
+    .leaflet-control-layers .legend-section{
+      border-top:1px solid #ddd;
+      margin-top:8px;
+      padding-top:8px;
+    }
 
     #geocoder-control{position:absolute;top:10px;left:10px;width:320px;z-index:1000;background:#fff;border-radius:6px;
       box-shadow:0 2px 6px rgba(0,0,0,.3);padding:5px}
@@ -105,27 +113,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     return legend;
   }
 
-  function addHeatLegend(targetMap) {
-    const legend = L.control({ position: 'bottomleft' });
-    legend.onAdd = () => {
+  function addSimplePointLegend(targetMap, title = 'Legend', label = 'Planning applications (points)', color = '#FFD700') {
+    const ctrl = L.control({ position: 'bottomright' });
+    ctrl.onAdd = () => {
       const div = L.DomUtil.create('div', 'info legend');
-      div.innerHTML = `<div class="title">Legend</div>`;
-      div.innerHTML += `<div>Planning applications (heat)</div>
-        <div class="ramp" style="
-          background: linear-gradient(to right,
-            #2b83ba, #abdda4, #ffffbf, #fdae61, #d7191c);"></div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:-2px;">
-          <span>Lower</span><span>Higher</span>
+      div.innerHTML = `<div class="title">${title}</div>`;
+      div.innerHTML += `<div class="row">
+          <span class="swatch" style="background:${color}; border:1px solid #0002; border-radius:50%"></span>
+          ${label}
         </div>`;
-      div.innerHTML += `<div class="row" style="margin-top:6px;">
-        <span class="swatch" style="background:#fff;border:2px solid #000;border-radius:50%"></span>
-        GP locations (points)
-      </div>`;
-      div.innerHTML += `<div class="note">Tip: use the layer box (top-right) to toggle heat vs. GP points.</div>`;
       return div;
     };
-    legend.addTo(targetMap);
-    return legend;
+    ctrl.addTo(targetMap);
+    return ctrl;
+  }
+
+  function addHeatLegendIntoLayers(layerControl) {
+    const container = layerControl.getContainer();
+    const sec = document.createElement('div');
+    sec.className = 'legend-section info legend';
+    sec.innerHTML = `
+      <div class="title">Legend</div>
+      <div>Planning applications (heat)</div>
+      <div class="ramp" style="
+          background: linear-gradient(to right,
+            #2b83ba, #abdda4, #ffffbf, #fdae61, #d7191c);"></div>
+      <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:-2px;">
+        <span>Lower</span><span>Higher</span>
+      </div>
+      <div class="row" style="margin-top:6px;">
+        <span class="swatch" style="background:#fff;border:2px solid #000;border-radius:50%"></span>
+        GP locations (points)
+      </div>
+      <div class="note">Tip: use the checkboxes above to toggle layers.</div>
+    `;
+    container.appendChild(sec);
   }
 
   /* Optional coordinate helper (toggle if your files are [lat,lon]) */
@@ -142,7 +164,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   map.setMaxBounds(wicklowBounds.pad(0.25));
   map.options.minZoom = map.getZoom();
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(map);
-  L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom:18 }); // available if you want to add it
+  L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom:18 }); // available as an alt base
   const planAppCluster = L.markerClusterGroup({
     showCoverageOnHover:false, spiderfyOnMaxZoom:true,
     disableClusteringAtZoom:14, maxClusterRadius:60, chunkedLoading:true
@@ -206,8 +228,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const fb = focusLayer.getBounds();
     if (fb.isValid()) focusMap.fitBounds(fb, { padding:[20,20] });
 
-    // Add status legend to FOCUSED map
-    addStatusLegend(focusMap, 'Legend — Application Status');
+    // Focus map: simple legend for yellow points
+    addSimplePointLegend(focusMap, 'Legend', 'Planning applications (points)', '#FFD700');
 
   } catch (e) {
     console.error('Planning applications load error:', e);
@@ -259,14 +281,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('GPS file load error:', e);
   }
 
-  /* Layer control (heatmap) */
+  /* Layer control (heatmap) + merged legend */
   const overlays = {};
   if (planHeat) overlays['Heat – Planning Applications'] = planHeat;
   if (gpLayer)  overlays['GP Locations (points)']        = gpLayer;
-  L.control.layers(null, overlays, { collapsed:false }).addTo(heatmap);
+  const layerCtrl = L.control.layers(null, overlays, { collapsed:false }).addTo(heatmap);
 
-  // Add HEATMAP legend with title & hint
-  addHeatLegend(heatmap);
+  // Merge the legend into the SAME box:
+  addHeatLegendIntoLayers(layerCtrl);
+
+  /* MAIN map — status legend back in bottom right */
+  addStatusLegend(map, 'Legend — Application Status');
 
   /* Geocoder on main map */
   mapboxgl.accessToken = 'pk.eyJ1IjoicmVhbHRhNzgiLCJhIjoiY204cWE2MWxsMGhwYjJxc2FteGhhczkzYyJ9.PCnUHvs7IX7wtLx0On63kw';
