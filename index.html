@@ -15,7 +15,7 @@
 
   <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 
-  <!-- Mapbox geocoder -->
+  <!-- Mapbox geocoder (optional) -->
   <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
   <link href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-geocoder/v4.7.2/mapbox-gl-geocoder.css" rel="stylesheet">
   <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
@@ -34,10 +34,9 @@
     .info.legend .swatch{width:12px;height:12px;margin-right:8px;border-radius:2px;border:1px solid #0002}
     .info.legend .ramp{width:160px;height:12px;border:1px solid #0002;margin:6px 0}
     .info.legend .note{font-size:11px;color:#444;margin-top:6px}
+    /* Legend embedded inside the layer box */
     .leaflet-control-layers .legend-section{
-      border-top:1px solid #ddd;
-      margin-top:8px;
-      padding-top:8px;
+      border-top:1px solid #ddd;margin-top:8px;padding-top:8px;
     }
 
     #geocoder-control{position:absolute;top:10px;left:10px;width:320px;z-index:1000;background:#fff;border-radius:6px;
@@ -66,12 +65,12 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
-
-  /* Data files */
+  /* ====== Config ====== */
   const PLAN_FILE = './Data/plan_app_ww_clean.geojson';
   const GPS_FILE  = './Data/gps_ww_cleaned.geojson';
+  const MAPBOX_TOKEN = 'YOUR_MAPBOX_TOKEN'; // <- put a real token here if you want the search box
 
-  /* Status colour helper */
+  /* ====== Helpers ====== */
   function statusColor(status) {
     const s = (status || '').toUpperCase();
     if (s.includes('FINALISED')) return '#8E24AA';
@@ -82,7 +81,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     return '#FFD700';
   }
 
-  /* Legend helpers */
   const STATUS_COLORS = {
     "Finalised": "#8E24AA",
     "Appealed Financial": "#E53935",
@@ -136,7 +134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     box.appendChild(sec);
   }
 
-  /* Main map */
+  /* ====== Main map (zoomed in) ====== */
   const map = L.map('map', { zoomControl:true }).setView([53.0, -6.35], 11);
   const wicklowBounds = L.latLngBounds([52.72, -6.80], [53.35, -5.85]);
   map.setMaxBounds(wicklowBounds.pad(0.25));
@@ -147,38 +145,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     disableClusteringAtZoom:14, maxClusterRadius:60, chunkedLoading:true
   }).addTo(map);
 
-  /* Focus map */
+  /* ====== Focus map (zoomed to Greystones/Delgany) ====== */
   const focusMap = L.map('wicklowMap').setView([53.14, -6.07], 13);
   L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
     maxZoom:18,
     attribution:'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)'
   }).addTo(focusMap);
-
   const focusBBox = L.latLngBounds([53.095, -6.12], [53.190, -6.020]);
 
-  /* Heat map */
+  /* ====== Heat map ====== */
   const heatmap = L.map('heatmap').setView([52.99, -6.36], 10);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(heatmap);
   let planHeat = null, gpLayer = null;
 
-  /* Load planning apps */
+  /* ====== Load planning apps (main + focus) ====== */
   try {
     const planData = await (await fetch(PLAN_FILE)).json();
 
+    // Cluster-friendly markers on the MAIN map
     const planLayer = L.geoJSON(planData, {
-      pointToLayer: (f, latlng) => L.circleMarker(latlng, {
-        radius:5,
-        fillColor: statusColor(f.properties?.application_status),
-        color:'#000', weight:0.8, opacity:1, fillOpacity:0.95
-      })
+      pointToLayer: (f, latlng) => {
+        const color = statusColor(f.properties?.application_status);
+        const icon = L.divIcon({
+          className: 'dot-icon',
+          html: `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;
+                          border:1px solid #0003;background:${color};"></span>`,
+          iconSize: [10,10]
+        });
+        return L.marker(latlng, { icon });
+      }
     });
     planAppCluster.addLayer(planLayer);
 
+    // Points on the FOCUS map (filtered by bbox)
     const focusFeatures = (planData.features || []).filter(f => {
       const c = f.geometry && f.geometry.coordinates;
       return Array.isArray(c) && focusBBox.contains(L.latLng(c[1], c[0]));
     });
-
     L.geoJSON(
       { type:'FeatureCollection', features: focusFeatures },
       { pointToLayer: (f, latlng) => L.circleMarker(latlng, {
@@ -187,10 +190,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         })
       }
     ).addTo(focusMap);
+  } catch (e) {
+    console.error('Planning load error:', e);
+  }
 
-  } catch (e) { console.error('Planning load error:', e); }
-
-  /* Heat layer */
+  /* ====== Heat layer data ====== */
   try {
     const planData = await (await fetch(PLAN_FILE)).json();
     const planPoints = [];
@@ -201,9 +205,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (L.heatLayer && planPoints.length) {
       planHeat = L.heatLayer(planPoints, { radius:16, blur:12, maxZoom:16, minOpacity:0.30 }).addTo(heatmap);
     }
-  } catch (e) { console.error('Heat load error:', e); }
+  } catch (e) {
+    console.error('Heat load error:', e);
+  }
 
-  /* GP locations */
+  /* ====== GP locations for heatmap ====== */
   try {
     const gpsData = await (await fetch(GPS_FILE)).json();
     const gpsPoints = [];
@@ -223,23 +229,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   } catch (e) { console.error('GPS load error:', e); }
 
-  /* Layer control + embed heat legend */
+  /* ====== Heatmap layer control + merged legend ====== */
   const overlays = {};
   if (planHeat) overlays['Heat – Planning Applications'] = planHeat;
   if (gpLayer) overlays['GP Locations (points)'] = gpLayer;
   const layerCtrl = L.control.layers(null, overlays, { collapsed:false }).addTo(heatmap);
   addHeatLegendIntoLayers(layerCtrl);
 
-  /* Geocoder */
-  mapboxgl.accessToken = 'YOUR_MAPBOX_TOKEN';
-  const geocoderDiv = document.createElement('div'); geocoderDiv.id = 'geocoder-control'; geocoderDiv.style.margin = '10px';
-  document.getElementById('map').appendChild(geocoderDiv);
-  const geocoder = new MapboxGeocoder({ accessToken: mapboxgl.accessToken, mapboxgl, marker:false, zoom:13, placeholder:'Search Wicklow locations…' });
-  geocoder.addTo('#geocoder-control');
-
-  /* Add legends */
+  /* ====== Legends (added BEFORE geocoder so they always render) ====== */
   addStatusLegend(map);
   addSimplePointLegend(focusMap);
+
+  /* ====== Optional Geocoder (skip gracefully if no/placeholder token) ====== */
+  try {
+    if (MAPBOX_TOKEN && MAPBOX_TOKEN !== 'YOUR_MAPBOX_TOKEN') {
+      mapboxgl.accessToken = MAPBOX_TOKEN;
+      const geocoderDiv = document.createElement('div');
+      geocoderDiv.id = 'geocoder-control';
+      geocoderDiv.style.margin = '10px';
+      document.getElementById('map').appendChild(geocoderDiv);
+
+      const geocoder = new MapboxGeocoder({
+        accessToken: MAPBOX_TOKEN,
+        mapboxgl,
+        marker:false, zoom:13,
+        placeholder:'Search Wicklow locations…'
+      });
+      geocoder.addTo('#geocoder-control');
+    } else {
+      console.warn('Skipping geocoder: no/placeholder Mapbox token provided.');
+    }
+  } catch (err) {
+    console.warn('Geocoder not initialised:', err);
+  }
 });
 </script>
 </body>
