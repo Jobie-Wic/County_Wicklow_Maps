@@ -224,7 +224,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         })
       }
     ).addTo(focusMap);
-
+    
+    const fb = focusLayer.getBounds();
+    if (fb.isValid()) focusMap.fitBounds(fb, { padding:[20,20] });
+    
     // Focus map: simple legend for yellow points
     addSimplePointLegend(focusMap, 'Legend', 'Planning applications (points)', '#FFD700');
 
@@ -300,4 +303,5 @@ document.addEventListener('DOMContentLoaded', async () => {
 </script>
 </body>
 </html>
+
 
